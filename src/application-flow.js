@@ -2,6 +2,13 @@ const DEFAULT_CHANNEL_PREFIX = 'application';
 
 const APPLICATION_BUTTON_PREFIX = 'guild-application:apply:';
 
+const OFFICER_CHANNEL_ALLOW_PERMISSIONS = {
+  ViewChannel: true,
+  SendMessages: true,
+  ReadMessageHistory: true,
+  ManageChannels: true,
+};
+
 export function buildApplicationButtonId(applicationId) {
   return `${APPLICATION_BUTTON_PREFIX}${applicationId}`;
 }
@@ -81,6 +88,14 @@ export async function ensureCategory(guild, categoryName) {
   });
 }
 
+async function ensureOfficerRoleAccess(channel, officerRole) {
+  if (!officerRole) {
+    return;
+  }
+
+  await channel.permissionOverwrites.edit(officerRole.id, OFFICER_CHANNEL_ALLOW_PERMISSIONS);
+}
+
 export async function createPendingApplicationChannel({
   guild,
   user,
@@ -96,6 +111,7 @@ export async function createPendingApplicationChannel({
 
   const existing = findApplicationChannelByUser([...applicationChannels.values()], user.id);
   if (existing) {
+    await ensureOfficerRoleAccess(existing, officerRole);
     return { channel: existing, created: false };
   }
 
@@ -132,6 +148,8 @@ export async function createPendingApplicationChannel({
     permissionOverwrites,
   });
 
+  await ensureOfficerRoleAccess(channel, officerRole);
+
   await channel.send([
     `Application for <@${user.id}>`,
     '',
@@ -148,8 +166,10 @@ export async function moveApplicationChannelToStatus({
   status,
   approvedCategoryName,
   deniedCategoryName,
+  officerRole,
 }) {
   const destinationName = status === 'approved' ? approvedCategoryName : deniedCategoryName;
   const destinationCategory = await ensureCategory(guild, destinationName);
   await channel.setParent(destinationCategory.id);
+  await ensureOfficerRoleAccess(channel, officerRole);
 }
