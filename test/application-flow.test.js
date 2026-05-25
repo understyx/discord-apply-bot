@@ -1,10 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  buildApplicationButtonId,
   buildApplicationChannelName,
   findApplicationChannelByUser,
   getApplicationTopic,
   getQuestionsText,
+  parseApplicationButtonId,
   parseStatusCommand,
 } from '../src/application-flow.js';
 
@@ -36,4 +38,13 @@ test('getQuestionsText prefers configured text and falls back safely', () => {
   assert.equal(getQuestionsText('  What class do you play?  ', 'Fallback'), 'What class do you play?');
   assert.equal(getQuestionsText('', 'Fallback'), 'Fallback');
   assert.equal(getQuestionsText('', ''), 'Please answer the guild application questions.');
+});
+
+test('application button IDs are built and parsed safely', () => {
+  const customId = buildApplicationButtonId(42);
+  assert.equal(customId, 'guild-application:apply:42');
+  assert.equal(parseApplicationButtonId(customId), 42);
+  assert.equal(parseApplicationButtonId('guild-application:apply:0'), null);
+  assert.equal(parseApplicationButtonId('guild-application:apply:not-a-number'), null);
+  assert.equal(parseApplicationButtonId('guild-application:other:42'), null);
 });
