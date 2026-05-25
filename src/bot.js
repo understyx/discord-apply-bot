@@ -124,40 +124,40 @@ function buildApplicationButtonRows(applications) {
   return rows;
 }
 
+async function applyApplicationStatus({
+  guild,
+  channel,
+  member,
+  status,
+  officerRole,
+  respond,
+}) {
+  if (channel?.type !== ChannelType.GuildText) {
+    await respond('This command must be used in an application text channel.');
+    return;
+  }
+
+  if (!hasOfficerPermissions(member, officerRole)) {
+    await respond('Only officers can approve or deny applications.');
+    return;
+  }
+
+  await moveApplicationChannelToStatus({
+    guild,
+    channel,
+    status,
+    approvedCategoryName: DEFAULT_APPROVED_CATEGORY_NAME,
+    deniedCategoryName: DEFAULT_DENIED_CATEGORY_NAME,
+    officerRole,
+  });
+
+  await respond(`Application has been ${status}.`);
+}
+
 async function getOfficerRoleForGuild(guild) {
   const settings = await getGuildSettings(guild.id);
   if (!settings.officerRoleId) {
     return null;
-  }
-
-  async function applyApplicationStatus({
-    guild,
-    channel,
-    member,
-    status,
-    officerRole,
-    respond,
-  }) {
-    if (channel?.type !== ChannelType.GuildText) {
-      await respond('This command must be used in an application text channel.');
-      return;
-    }
-
-    if (!hasOfficerPermissions(member, officerRole)) {
-      await respond('Only officers can approve or deny applications.');
-      return;
-    }
-
-    await moveApplicationChannelToStatus({
-      guild,
-      channel,
-      status,
-      approvedCategoryName: DEFAULT_APPROVED_CATEGORY_NAME,
-      deniedCategoryName: DEFAULT_DENIED_CATEGORY_NAME,
-      officerRole,
-    });
-
-    await respond(`Application has been ${status}.`);
   }
 
   return guild.roles.cache.get(settings.officerRoleId)
