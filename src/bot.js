@@ -19,6 +19,7 @@ import {
   createPendingApplicationChannel,
   moveApplicationChannelToStatus,
   parseApplicationButtonId,
+  parseStatusCommand,
 } from './application-flow.js';
 import {
   getApplicationById,
@@ -71,6 +72,8 @@ const pendingSetQuestionsContext = new Map();
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
   ],
 });
 
@@ -125,6 +128,36 @@ async function getOfficerRoleForGuild(guild) {
   const settings = await getGuildSettings(guild.id);
   if (!settings.officerRoleId) {
     return null;
+  }
+
+  async function applyApplicationStatus({
+    guild,
+    channel,
+    member,
+    status,
+    officerRole,
+    respond,
+  }) {
+    if (channel?.type !== ChannelType.GuildText) {
+      await respond('This command must be used in an application text channel.');
+      return;
+    }
+
+    if (!hasOfficerPermissions(member, officerRole)) {
+      await respond('Only officers can approve or deny applications.');
+      return;
+    }
+
+    await moveApplicationChannelToStatus({
+      guild,
+      channel,
+      status,
+      approvedCategoryName: DEFAULT_APPROVED_CATEGORY_NAME,
+      deniedCategoryName: DEFAULT_DENIED_CATEGORY_NAME,
+      officerRole,
+    });
+
+    await respond(`Application has been ${status}.`);
   }
 
   return guild.roles.cache.get(settings.officerRoleId)
@@ -286,27 +319,17 @@ client.on('interactionCreate', async (interaction) => {
     }
 
     if (interaction.commandName === 'approve' || interaction.commandName === 'deny') {
-      if (interaction.channel?.type !== ChannelType.GuildText) {
-        await replyEphemeral(interaction, 'This command must be used in an application text channel.');
-        return;
-      }
-
-      if (!hasOfficerPermissions(interaction.member, officerRole)) {
-        await replyEphemeral(interaction, 'Only officers can approve or deny applications.');
-        return;
-      }
-
       const status = interaction.commandName === 'approve' ? 'approved' : 'denied';
-      await moveApplicationChannelToStatus({
+      await applyApplicationStatus({
         guild: interaction.guild,
         channel: interaction.channel,
+        member: interaction.member,
         status,
-        approvedCategoryName: DEFAULT_APPROVED_CATEGORY_NAME,
-        deniedCategoryName: DEFAULT_DENIED_CATEGORY_NAME,
         officerRole,
+        respond: async (content) => {
+          await interaction.reply(content);
+        },
       });
-
-      await interaction.reply(`Application has been ${status}.`);
       return;
     }
 
@@ -389,6 +412,29 @@ client.on('interactionCreate', async (interaction) => {
     : `You already have a pending application: <#${channel.id}>`;
 
   await replyEphemeral(interaction, response);
+});
+
+client.on('messageCreate', async (message) => {
+  if (message.author.bot || !message.guild) {
+    return;
+  }
+
+  const status = parseStatusCommand(message.content);
+  if (!status) {
+    return;
+  }
+
+  const officerRole = await getOfficerRoleForGuild(message.guild);
+  await applyApplicationStatus({
+    guild: message.guild,
+    channel: message.channel,
+    member: message.member,
+    status,
+    officerRole,
+    respond: async (content) => {
+      await message.reply(content);
+    },
+  });
 });
 
 async function startBot() {

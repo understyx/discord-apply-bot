@@ -43,3 +43,5 @@ npm start
 - `/postapply` — posts the embed with application buttons
 - `/approve` — move current application channel to approved category
 - `/deny` — move current application channel to denied category
+- `!approve` — fallback message command to move current application channel to approved category
+- `!deny` — fallback message command to move current application channel to denied category
