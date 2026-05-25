@@ -1,6 +1,24 @@
 const DEFAULT_CHANNEL_PREFIX = 'application';
 
-export const APPLICATION_BUTTON_ID = 'guild-application:apply';
+const APPLICATION_BUTTON_PREFIX = 'guild-application:apply:';
+
+export function buildApplicationButtonId(applicationId) {
+  return `${APPLICATION_BUTTON_PREFIX}${applicationId}`;
+}
+
+export function parseApplicationButtonId(customId) {
+  if (!customId || !customId.startsWith(APPLICATION_BUTTON_PREFIX)) {
+    return null;
+  }
+
+  const rawApplicationId = customId.slice(APPLICATION_BUTTON_PREFIX.length);
+  const applicationId = Number(rawApplicationId);
+  if (!Number.isInteger(applicationId) || applicationId < 1) {
+    return null;
+  }
+
+  return applicationId;
+}
 
 export function parseStatusCommand(content) {
   if (!content) {

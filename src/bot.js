@@ -14,37 +14,68 @@ import {
   TextInputStyle,
 } from 'discord.js';
 import {
-  APPLICATION_BUTTON_ID,
+  buildApplicationButtonId,
   createPendingApplicationChannel,
-  getQuestionsText,
   moveApplicationChannelToStatus,
+  parseApplicationButtonId,
 } from './application-flow.js';
+import {
+  getApplicationById,
+  getApplicationByName,
+  getGuildSettings,
+  initDatabase,
+  listGuildApplications,
+  setGuildOfficerRole,
+  upsertApplication,
+} from './storage.js';
+
+const DEFAULT_PENDING_CATEGORY_NAME = 'Applications (Pending)';
+const DEFAULT_APPROVED_CATEGORY_NAME = 'Applications (Approved)';
+const DEFAULT_DENIED_CATEGORY_NAME = 'Applications (Denied)';
+const DEFAULT_APPLICATION_NAME = 'Guild Application';
+const DEFAULT_QUESTIONS = 'Tell us your character name, class/spec, and raid experience.';
 
 const config = {
   token: process.env.DISCORD_TOKEN,
-  officerRoleName: process.env.OFFICER_ROLE_NAME || 'Officer',
-  pendingCategoryName: process.env.APPLICATIONS_PENDING_CATEGORY || 'Applications (Pending)',
-  approvedCategoryName: process.env.APPLICATIONS_APPROVED_CATEGORY || 'Applications (Approved)',
-  deniedCategoryName: process.env.APPLICATIONS_DENIED_CATEGORY || 'Applications (Denied)',
-  defaultApplicationName: process.env.APPLY_APPLICATION_NAME || 'Guild Application',
-  defaultQuestions: process.env.APPLY_QUESTIONS || 'Tell us your character name, class/spec, and raid experience.',
+  mysqlHost: process.env.MYSQL_HOST,
+  mysqlPort: Number(process.env.MYSQL_PORT || 3306),
+  mysqlUser: process.env.MYSQL_USER,
+  mysqlPassword: process.env.MYSQL_PASSWORD,
+  mysqlDatabase: process.env.MYSQL_DATABASE,
 };
 
-if (!config.token) {
-  throw new Error('Missing DISCORD_TOKEN in environment.');
+const missingConfig = [
+  ['DISCORD_TOKEN', config.token],
+  ['MYSQL_HOST', config.mysqlHost],
+  ['MYSQL_USER', config.mysqlUser],
+  ['MYSQL_PASSWORD', config.mysqlPassword],
+  ['MYSQL_DATABASE', config.mysqlDatabase],
+].filter(([, value]) => !value).map(([key]) => key);
+
+if (missingConfig.length) {
+  throw new Error(`Missing required environment variables: ${missingConfig.join(', ')}`);
+}
+
+if (!Number.isInteger(config.mysqlPort) || config.mysqlPort < 1) {
+  throw new Error('MYSQL_PORT must be a valid positive integer.');
 }
 
 const SET_QUESTIONS_MODAL_ID = 'guild-application:set-questions';
-const APPLICATION_NAME_INPUT_ID = 'application-name';
+const SET_QUESTIONS_APPLICATION_NAME_OPTION_ID = 'application';
+const SET_OFFICER_ROLE_OPTION_ID = 'role';
 const APPLICATION_QUESTIONS_INPUT_ID = 'application-questions';
 
-const guildApplicationConfig = new Map();
+const pendingSetQuestionsContext = new Map();
 
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
   ],
 });
+
+function getSetQuestionsContextKey(guildId, userId) {
+  return `${guildId}:${userId}`;
+}
 
 function hasOfficerPermissions(member, officerRole) {
   if (!member) {
@@ -58,19 +89,53 @@ function hasOfficerPermissions(member, officerRole) {
   return Boolean(officerRole && member.roles.cache.has(officerRole.id));
 }
 
-function getGuildApplicationConfig(guildId) {
-  const configured = guildApplicationConfig.get(guildId);
-  return {
-    applicationName: configured?.applicationName?.trim() || config.defaultApplicationName,
-    questionsText: getQuestionsText(configured?.questionsText, config.defaultQuestions),
-  };
+function buildApplicationButtonRows(applications) {
+  const rows = [];
+
+  for (let i = 0; i < applications.length; i += 5) {
+    const rowApplications = applications.slice(i, i + 5);
+    const row = new ActionRowBuilder().addComponents(
+      rowApplications.map((application) => (
+        new ButtonBuilder()
+          .setCustomId(buildApplicationButtonId(application.id))
+          .setLabel(application.display_name)
+          .setStyle(ButtonStyle.Primary)
+      )),
+    );
+
+    rows.push(row);
+  }
+
+  return rows;
+}
+
+async function getOfficerRoleForGuild(guild) {
+  const settings = await getGuildSettings(guild.id);
+  if (!settings.officerRoleId) {
+    return null;
+  }
+
+  return guild.roles.cache.get(settings.officerRoleId)
+    || await guild.roles.fetch(settings.officerRoleId).catch(() => null);
 }
 
 async function registerSlashCommands(guild) {
   const commands = [
     new SlashCommandBuilder()
       .setName('setquestions')
-      .setDescription('Set the application name and application questions'),
+      .setDescription('Set questions for a specific application')
+      .addStringOption((option) => option
+        .setName(SET_QUESTIONS_APPLICATION_NAME_OPTION_ID)
+        .setDescription('Which application to edit or create')
+        .setRequired(true)
+        .setMaxLength(80)),
+    new SlashCommandBuilder()
+      .setName('setofficerrole')
+      .setDescription('Set which role can manage applications')
+      .addRoleOption((option) => option
+        .setName(SET_OFFICER_ROLE_OPTION_ID)
+        .setDescription('Officer role')
+        .setRequired(true)),
     new SlashCommandBuilder()
       .setName('postapply')
       .setDescription('Post the application embed with apply buttons'),
@@ -112,7 +177,7 @@ client.on('interactionCreate', async (interaction) => {
       return;
     }
 
-    const officerRole = interaction.guild.roles.cache.find((role) => role.name === config.officerRoleName);
+    const officerRole = await getOfficerRoleForGuild(interaction.guild);
 
     if (interaction.commandName === 'setquestions') {
       if (!hasOfficerPermissions(interaction.member, officerRole)) {
@@ -120,18 +185,20 @@ client.on('interactionCreate', async (interaction) => {
         return;
       }
 
-      const currentConfig = getGuildApplicationConfig(interaction.guild.id);
+      const requestedApplicationName = interaction.options
+        .getString(SET_QUESTIONS_APPLICATION_NAME_OPTION_ID, true)
+        .trim();
+
+      if (!requestedApplicationName) {
+        await interaction.reply({ content: 'Application name is required.', ephemeral: true });
+        return;
+      }
+
+      const existingApplication = await getApplicationByName(interaction.guild.id, requestedApplicationName);
+
       const modal = new ModalBuilder()
         .setCustomId(SET_QUESTIONS_MODAL_ID)
-        .setTitle('Configure Application');
-
-      const applicationNameInput = new TextInputBuilder()
-        .setCustomId(APPLICATION_NAME_INPUT_ID)
-        .setLabel('Application name')
-        .setStyle(TextInputStyle.Short)
-        .setMaxLength(80)
-        .setRequired(true)
-        .setValue(currentConfig.applicationName);
+        .setTitle(`Questions: ${requestedApplicationName}`.slice(0, 45));
 
       const questionsInput = new TextInputBuilder()
         .setCustomId(APPLICATION_QUESTIONS_INPUT_ID)
@@ -139,14 +206,31 @@ client.on('interactionCreate', async (interaction) => {
         .setStyle(TextInputStyle.Paragraph)
         .setMaxLength(3500)
         .setRequired(true)
-        .setValue(currentConfig.questionsText);
+        .setValue(existingApplication?.questions_text || DEFAULT_QUESTIONS);
 
       modal.addComponents(
-        new ActionRowBuilder().addComponents(applicationNameInput),
         new ActionRowBuilder().addComponents(questionsInput),
       );
 
+      pendingSetQuestionsContext.set(
+        getSetQuestionsContextKey(interaction.guild.id, interaction.user.id),
+        requestedApplicationName,
+      );
+
       await interaction.showModal(modal);
+      return;
+    }
+
+    if (interaction.commandName === 'setofficerrole') {
+      if (!interaction.member.permissions.has(PermissionFlagsBits.ManageGuild)) {
+        await interaction.reply({ content: 'You need Manage Server permission to set the officer role.', ephemeral: true });
+        return;
+      }
+
+      const role = interaction.options.getRole(SET_OFFICER_ROLE_OPTION_ID, true);
+      await setGuildOfficerRole(interaction.guild.id, role.id);
+
+      await interaction.reply({ content: `Officer role updated to <@&${role.id}>.`, ephemeral: true });
       return;
     }
 
@@ -156,22 +240,33 @@ client.on('interactionCreate', async (interaction) => {
         return;
       }
 
-      const currentConfig = getGuildApplicationConfig(interaction.guild.id);
-      const embed = new EmbedBuilder()
-        .setTitle(currentConfig.applicationName)
-        .setDescription('Hello! Thank you for showing interest in our guild. Choose an application below to get started.')
-        .setColor(0x5865f2);
+      let applications = await listGuildApplications(interaction.guild.id);
+      if (!applications.length) {
+        const application = await upsertApplication({
+          guildId: interaction.guild.id,
+          applicationName: DEFAULT_APPLICATION_NAME,
+          questionsText: DEFAULT_QUESTIONS,
+        });
 
-      const row = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId(APPLICATION_BUTTON_ID)
-          .setLabel(currentConfig.applicationName)
-          .setStyle(ButtonStyle.Primary),
-      );
+        applications = [application];
+      }
+
+      const maxApplicationsInMessage = 25;
+      const visibleApplications = applications.slice(0, maxApplicationsInMessage);
+      const hasHiddenApplications = applications.length > maxApplicationsInMessage;
+
+      const embedDescription = hasHiddenApplications
+        ? `Hello! Thank you for showing interest in our guild. Choose an application below to get started. Showing first ${maxApplicationsInMessage} applications.`
+        : 'Hello! Thank you for showing interest in our guild. Choose an application below to get started.';
+
+      const embed = new EmbedBuilder()
+        .setTitle('Guild Applications')
+        .setDescription(embedDescription)
+        .setColor(0x5865f2);
 
       await interaction.channel.send({
         embeds: [embed],
-        components: [row],
+        components: buildApplicationButtonRows(visibleApplications),
       });
 
       await interaction.reply({ content: 'Application embed posted.', ephemeral: true });
@@ -194,8 +289,8 @@ client.on('interactionCreate', async (interaction) => {
         guild: interaction.guild,
         channel: interaction.channel,
         status,
-        approvedCategoryName: config.approvedCategoryName,
-        deniedCategoryName: config.deniedCategoryName,
+        approvedCategoryName: DEFAULT_APPROVED_CATEGORY_NAME,
+        deniedCategoryName: DEFAULT_DENIED_CATEGORY_NAME,
       });
 
       await interaction.reply(`Application has been ${status}.`);
@@ -211,30 +306,47 @@ client.on('interactionCreate', async (interaction) => {
       return;
     }
 
-    const officerRole = interaction.guild.roles.cache.find((role) => role.name === config.officerRoleName);
+    const officerRole = await getOfficerRoleForGuild(interaction.guild);
     if (!hasOfficerPermissions(interaction.member, officerRole)) {
       await interaction.reply({ content: 'Only officers can configure applications.', ephemeral: true });
       return;
     }
 
-    const applicationName = interaction.fields.getTextInputValue(APPLICATION_NAME_INPUT_ID).trim();
-    const questionsText = interaction.fields.getTextInputValue(APPLICATION_QUESTIONS_INPUT_ID).trim();
+    const contextKey = getSetQuestionsContextKey(interaction.guild.id, interaction.user.id);
+    const applicationName = pendingSetQuestionsContext.get(contextKey);
+    pendingSetQuestionsContext.delete(contextKey);
 
-    if (!applicationName || !questionsText) {
-      await interaction.reply({ content: 'Both application name and questions are required.', ephemeral: true });
+    if (!applicationName) {
+      await interaction.reply({ content: 'Application context expired. Please run /setquestions again.', ephemeral: true });
       return;
     }
 
-    guildApplicationConfig.set(interaction.guild.id, {
+    const questionsText = interaction.fields.getTextInputValue(APPLICATION_QUESTIONS_INPUT_ID).trim();
+
+    if (!questionsText) {
+      await interaction.reply({ content: 'Application questions are required.', ephemeral: true });
+      return;
+    }
+
+    await upsertApplication({
+      guildId: interaction.guild.id,
       applicationName,
       questionsText,
     });
 
-    await interaction.reply({ content: 'Application settings have been updated.', ephemeral: true });
+    await interaction.reply({
+      content: `Application settings saved for **${applicationName}**.`,
+      ephemeral: true,
+    });
     return;
   }
 
-  if (!interaction.isButton() || interaction.customId !== APPLICATION_BUTTON_ID) {
+  if (!interaction.isButton()) {
+    return;
+  }
+
+  const applicationId = parseApplicationButtonId(interaction.customId);
+  if (!applicationId) {
     return;
   }
 
@@ -243,23 +355,43 @@ client.on('interactionCreate', async (interaction) => {
     return;
   }
 
-  const officerRole = interaction.guild.roles.cache.find((role) => role.name === config.officerRoleName);
-  const { questionsText } = getGuildApplicationConfig(interaction.guild.id);
+  const application = await getApplicationById(interaction.guild.id, applicationId);
+  if (!application) {
+    await interaction.reply({ content: 'This application is no longer available.', ephemeral: true });
+    return;
+  }
+
+  const officerRole = await getOfficerRoleForGuild(interaction.guild);
 
   const { channel, created } = await createPendingApplicationChannel({
     guild: interaction.guild,
     user: interaction.user,
     botUserId: interaction.client.user.id,
     officerRole,
-    pendingCategoryName: config.pendingCategoryName,
-    questionsText,
+    pendingCategoryName: DEFAULT_PENDING_CATEGORY_NAME,
+    questionsText: application.questions_text,
   });
 
   const response = created
-    ? `Your application channel is ready: <#${channel.id}>`
+    ? `Your **${application.display_name}** application channel is ready: <#${channel.id}>`
     : `You already have a pending application: <#${channel.id}>`;
 
   await interaction.reply({ content: response, ephemeral: true });
 });
 
-client.login(config.token);
+async function startBot() {
+  await initDatabase({
+    host: config.mysqlHost,
+    port: config.mysqlPort,
+    user: config.mysqlUser,
+    password: config.mysqlPassword,
+    database: config.mysqlDatabase,
+  });
+
+  await client.login(config.token);
+}
+
+startBot().catch((error) => {
+  console.error('Failed to start bot:', error);
+  process.exit(1);
+});
