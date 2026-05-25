@@ -7,6 +7,7 @@ import {
   Client,
   EmbedBuilder,
   GatewayIntentBits,
+  MessageFlags,
   ModalBuilder,
   PermissionFlagsBits,
   SlashCommandBuilder,
@@ -89,6 +90,17 @@ function hasOfficerPermissions(member, officerRole) {
   return Boolean(officerRole && member.roles.cache.has(officerRole.id));
 }
 
+async function replyEphemeral(interaction, payload) {
+  const responsePayload = typeof payload === 'string'
+    ? { content: payload }
+    : payload;
+
+  await interaction.reply({
+    ...responsePayload,
+    flags: MessageFlags.Ephemeral,
+  });
+}
+
 function buildApplicationButtonRows(applications) {
   const rows = [];
 
@@ -150,7 +162,7 @@ async function registerSlashCommands(guild) {
   await guild.commands.set(commands.map((command) => command.toJSON()));
 }
 
-client.once('ready', async () => {
+client.once('clientReady', async () => {
   console.log(`Logged in as ${client.user.tag}`);
 
   for (const guild of client.guilds.cache.values()) {
@@ -173,7 +185,7 @@ client.on('guildCreate', async (guild) => {
 client.on('interactionCreate', async (interaction) => {
   if (interaction.isChatInputCommand()) {
     if (!interaction.guild) {
-      await interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+      await replyEphemeral(interaction, 'This command can only be used in a server.');
       return;
     }
 
@@ -181,7 +193,7 @@ client.on('interactionCreate', async (interaction) => {
 
     if (interaction.commandName === 'setquestions') {
       if (!hasOfficerPermissions(interaction.member, officerRole)) {
-        await interaction.reply({ content: 'Only officers can configure applications.', ephemeral: true });
+        await replyEphemeral(interaction, 'Only officers can configure applications.');
         return;
       }
 
@@ -190,7 +202,7 @@ client.on('interactionCreate', async (interaction) => {
         .trim();
 
       if (!requestedApplicationName) {
-        await interaction.reply({ content: 'Application name is required.', ephemeral: true });
+        await replyEphemeral(interaction, 'Application name is required.');
         return;
       }
 
@@ -223,20 +235,20 @@ client.on('interactionCreate', async (interaction) => {
 
     if (interaction.commandName === 'setofficerrole') {
       if (!interaction.member.permissions.has(PermissionFlagsBits.ManageGuild)) {
-        await interaction.reply({ content: 'You need Manage Server permission to set the officer role.', ephemeral: true });
+        await replyEphemeral(interaction, 'You need Manage Server permission to set the officer role.');
         return;
       }
 
       const role = interaction.options.getRole(SET_OFFICER_ROLE_OPTION_ID, true);
       await setGuildOfficerRole(interaction.guild.id, role.id);
 
-      await interaction.reply({ content: `Officer role updated to <@&${role.id}>.`, ephemeral: true });
+      await replyEphemeral(interaction, `Officer role updated to <@&${role.id}>.`);
       return;
     }
 
     if (interaction.commandName === 'postapply') {
       if (!hasOfficerPermissions(interaction.member, officerRole)) {
-        await interaction.reply({ content: 'Only officers can post the application message.', ephemeral: true });
+        await replyEphemeral(interaction, 'Only officers can post the application message.');
         return;
       }
 
@@ -269,18 +281,18 @@ client.on('interactionCreate', async (interaction) => {
         components: buildApplicationButtonRows(visibleApplications),
       });
 
-      await interaction.reply({ content: 'Application embed posted.', ephemeral: true });
+      await replyEphemeral(interaction, 'Application embed posted.');
       return;
     }
 
     if (interaction.commandName === 'approve' || interaction.commandName === 'deny') {
       if (interaction.channel?.type !== ChannelType.GuildText) {
-        await interaction.reply({ content: 'This command must be used in an application text channel.', ephemeral: true });
+        await replyEphemeral(interaction, 'This command must be used in an application text channel.');
         return;
       }
 
       if (!hasOfficerPermissions(interaction.member, officerRole)) {
-        await interaction.reply({ content: 'Only officers can approve or deny applications.', ephemeral: true });
+        await replyEphemeral(interaction, 'Only officers can approve or deny applications.');
         return;
       }
 
@@ -303,13 +315,13 @@ client.on('interactionCreate', async (interaction) => {
 
   if (interaction.isModalSubmit() && interaction.customId === SET_QUESTIONS_MODAL_ID) {
     if (!interaction.guild) {
-      await interaction.reply({ content: 'This action can only be used in a server.', ephemeral: true });
+      await replyEphemeral(interaction, 'This action can only be used in a server.');
       return;
     }
 
     const officerRole = await getOfficerRoleForGuild(interaction.guild);
     if (!hasOfficerPermissions(interaction.member, officerRole)) {
-      await interaction.reply({ content: 'Only officers can configure applications.', ephemeral: true });
+      await replyEphemeral(interaction, 'Only officers can configure applications.');
       return;
     }
 
@@ -318,14 +330,14 @@ client.on('interactionCreate', async (interaction) => {
     pendingSetQuestionsContext.delete(contextKey);
 
     if (!applicationName) {
-      await interaction.reply({ content: 'Application context expired. Please run /setquestions again.', ephemeral: true });
+      await replyEphemeral(interaction, 'Application context expired. Please run /setquestions again.');
       return;
     }
 
     const questionsText = interaction.fields.getTextInputValue(APPLICATION_QUESTIONS_INPUT_ID).trim();
 
     if (!questionsText) {
-      await interaction.reply({ content: 'Application questions are required.', ephemeral: true });
+      await replyEphemeral(interaction, 'Application questions are required.');
       return;
     }
 
@@ -335,9 +347,8 @@ client.on('interactionCreate', async (interaction) => {
       questionsText,
     });
 
-    await interaction.reply({
+    await replyEphemeral(interaction, {
       content: `Application settings saved for **${applicationName}**.`,
-      ephemeral: true,
     });
     return;
   }
@@ -352,13 +363,13 @@ client.on('interactionCreate', async (interaction) => {
   }
 
   if (!interaction.guild) {
-    await interaction.reply({ content: 'Applications can only be created in a server.', ephemeral: true });
+    await replyEphemeral(interaction, 'Applications can only be created in a server.');
     return;
   }
 
   const application = await getApplicationById(interaction.guild.id, applicationId);
   if (!application) {
-    await interaction.reply({ content: 'This application is no longer available.', ephemeral: true });
+    await replyEphemeral(interaction, 'This application is no longer available.');
     return;
   }
 
@@ -377,7 +388,7 @@ client.on('interactionCreate', async (interaction) => {
     ? `Your **${application.display_name}** application channel is ready: <#${channel.id}>`
     : `You already have a pending application: <#${channel.id}>`;
 
-  await interaction.reply({ content: response, ephemeral: true });
+  await replyEphemeral(interaction, response);
 });
 
 async function startBot() {
