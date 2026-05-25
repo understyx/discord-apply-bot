@@ -137,3 +137,45 @@ test('moveApplicationChannelToStatus ignores missing permissions when updating o
 
   assert.equal(movedToCategoryId, 'denied-category-id');
 });
+
+test('moveApplicationChannelToStatus ignores missing permissions when moving channel category', async () => {
+  let officerOverwriteAttempted = false;
+
+  const channel = {
+    id: 'application-channel-id',
+    async setParent() {
+      const error = new Error('Missing Permissions');
+      error.code = 50013;
+      throw error;
+    },
+    permissionOverwrites: {
+      async edit() {
+        officerOverwriteAttempted = true;
+      },
+    },
+  };
+
+  const guild = {
+    channels: {
+      cache: {
+        find(fn) {
+          const category = { id: 'approved-category-id', type: 4, name: 'Approved Apps' };
+          return fn(category) ? category : undefined;
+        },
+      },
+    },
+  };
+
+  await assert.doesNotReject(async () => {
+    await moveApplicationChannelToStatus({
+      guild,
+      channel,
+      status: 'approved',
+      approvedCategoryName: 'Approved Apps',
+      deniedCategoryName: 'Denied Apps',
+      officerRole: { id: 'officer-role-id' },
+    });
+  });
+
+  assert.equal(officerOverwriteAttempted, false);
+});

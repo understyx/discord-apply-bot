@@ -96,7 +96,7 @@ async function ensureOfficerRoleAccess(channel, officerRole) {
   try {
     await channel.permissionOverwrites.edit(officerRole.id, OFFICER_CHANNEL_ALLOW_PERMISSIONS);
   } catch (error) {
-    if (error?.code === 50013 || error?.rawError?.code === 50013) {
+    if (isMissingPermissionsError(error)) {
       console.warn(
         `Missing permissions while updating officer role access for channel ${channel.id ?? 'unknown'}.`,
       );
@@ -105,6 +105,10 @@ async function ensureOfficerRoleAccess(channel, officerRole) {
 
     throw error;
   }
+}
+
+function isMissingPermissionsError(error) {
+  return error?.code === 50013 || error?.rawError?.code === 50013;
 }
 
 export async function createPendingApplicationChannel({
@@ -181,6 +185,19 @@ export async function moveApplicationChannelToStatus({
 }) {
   const destinationName = status === 'approved' ? approvedCategoryName : deniedCategoryName;
   const destinationCategory = await ensureCategory(guild, destinationName);
-  await channel.setParent(destinationCategory.id);
+
+  try {
+    await channel.setParent(destinationCategory.id);
+  } catch (error) {
+    if (isMissingPermissionsError(error)) {
+      console.warn(
+        `Missing permissions while moving application channel ${channel.id ?? 'unknown'} to category ${destinationCategory.id}.`,
+      );
+      return;
+    }
+
+    throw error;
+  }
+
   await ensureOfficerRoleAccess(channel, officerRole);
 }
