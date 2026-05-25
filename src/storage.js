@@ -2,6 +2,10 @@ import mysql from 'mysql2/promise';
 
 let pool;
 
+function escapeMysqlIdentifier(identifier) {
+  return `\`${identifier.replace(/`/g, '``')}\``;
+}
+
 function getPool() {
   if (!pool) {
     throw new Error('Database has not been initialized.');
@@ -21,12 +25,28 @@ export async function initDatabase({
   password,
   database,
 }) {
+  const normalizedDatabaseName = database.trim();
+  const bootstrapConnection = await mysql.createConnection({
+    host,
+    port,
+    user,
+    password,
+  });
+
+  try {
+    await bootstrapConnection.query(
+      `CREATE DATABASE IF NOT EXISTS ${escapeMysqlIdentifier(normalizedDatabaseName)}`,
+    );
+  } finally {
+    await bootstrapConnection.end();
+  }
+
   pool = mysql.createPool({
     host,
     port,
     user,
     password,
-    database,
+    database: normalizedDatabaseName,
     waitForConnections: true,
     connectionLimit: 10,
     queueLimit: 0,

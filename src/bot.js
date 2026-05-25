@@ -291,6 +291,7 @@ client.on('interactionCreate', async (interaction) => {
         status,
         approvedCategoryName: DEFAULT_APPROVED_CATEGORY_NAME,
         deniedCategoryName: DEFAULT_DENIED_CATEGORY_NAME,
+        officerRole,
       });
 
       await interaction.reply(`Application has been ${status}.`);
