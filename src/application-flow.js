@@ -82,18 +82,18 @@ export async function ensureCategory(guild, categoryName) {
     return existing;
   }
 
-  async function ensureOfficerRoleAccess(channel, officerRole) {
-    if (!officerRole) {
-      return;
-    }
-
-    await channel.permissionOverwrites.edit(officerRole.id, OFFICER_CHANNEL_ALLOW_PERMISSIONS);
-  }
-
   return guild.channels.create({
     name: categoryName,
     type: 4,
   });
+}
+
+async function ensureOfficerRoleAccess(channel, officerRole) {
+  if (!officerRole) {
+    return;
+  }
+
+  await channel.permissionOverwrites.edit(officerRole.id, OFFICER_CHANNEL_ALLOW_PERMISSIONS);
 }
 
 export async function createPendingApplicationChannel({
