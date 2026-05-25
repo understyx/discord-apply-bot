@@ -93,7 +93,18 @@ async function ensureOfficerRoleAccess(channel, officerRole) {
     return;
   }
 
-  await channel.permissionOverwrites.edit(officerRole.id, OFFICER_CHANNEL_ALLOW_PERMISSIONS);
+  try {
+    await channel.permissionOverwrites.edit(officerRole.id, OFFICER_CHANNEL_ALLOW_PERMISSIONS);
+  } catch (error) {
+    if (error?.code === 50013 || error?.rawError?.code === 50013) {
+      console.warn(
+        `Missing permissions while updating officer role access for channel ${channel.id ?? 'unknown'}.`,
+      );
+      return;
+    }
+
+    throw error;
+  }
 }
 
 export async function createPendingApplicationChannel({
