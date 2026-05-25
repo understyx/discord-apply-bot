@@ -66,6 +66,7 @@ export async function ensureCategory(guild, categoryName) {
 export async function createPendingApplicationChannel({
   guild,
   user,
+  botUserId,
   officerRole,
   pendingCategoryName,
   questionsText,
@@ -95,6 +96,13 @@ export async function createPendingApplicationChannel({
     permissionOverwrites.push({
       id: officerRole.id,
       allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory', 'ManageChannels'],
+    });
+  }
+
+  if (botUserId) {
+    permissionOverwrites.push({
+      id: botUserId,
+      allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory'],
     });
   }
 
