@@ -19,6 +19,7 @@ import {
   createPendingApplicationChannel,
   moveApplicationChannelToStatus,
   parseApplicationButtonId,
+  parseApplicationTopic,
   parseStatusCommand,
 } from './application-flow.js';
 import {
@@ -62,12 +63,14 @@ if (!Number.isInteger(config.mysqlPort) || config.mysqlPort < 1) {
   throw new Error('MYSQL_PORT must be a valid positive integer.');
 }
 
-const SET_QUESTIONS_MODAL_ID = 'guild-application:set-questions';
-const SET_QUESTIONS_APPLICATION_NAME_OPTION_ID = 'application';
+const CREATE_APPLICATION_MODAL_ID = 'guild-application:create-application';
+const CREATE_APPLICATION_NAME_OPTION_ID = 'application';
+const CREATE_APPLICATION_APPROVE_ROLE_OPTION_ID = 'approve_role';
+const CREATE_APPLICATION_DENY_ROLE_OPTION_ID = 'deny_role';
 const SET_OFFICER_ROLE_OPTION_ID = 'role';
 const APPLICATION_QUESTIONS_INPUT_ID = 'application-questions';
 
-const pendingSetQuestionsContext = new Map();
+const pendingCreateApplicationContext = new Map();
 
 const client = new Client({
   intents: [
@@ -77,7 +80,7 @@ const client = new Client({
   ],
 });
 
-function getSetQuestionsContextKey(guildId, userId) {
+function getCreateApplicationContextKey(guildId, userId) {
   return `${guildId}:${userId}`;
 }
 
@@ -130,6 +133,7 @@ async function applyApplicationStatus({
   member,
   status,
   officerRole,
+  botUserId,
   respond,
 }) {
   if (channel?.type !== ChannelType.GuildText) {
@@ -149,7 +153,25 @@ async function applyApplicationStatus({
     approvedCategoryName: DEFAULT_APPROVED_CATEGORY_NAME,
     deniedCategoryName: DEFAULT_DENIED_CATEGORY_NAME,
     officerRole,
+    botUserId,
   });
+
+  const parsed = parseApplicationTopic(channel.topic);
+  if (parsed?.applicationId) {
+    const application = await getApplicationById(guild.id, parsed.applicationId);
+    const roleId = status === 'approved' ? application?.approve_role_id : application?.deny_role_id;
+    if (roleId) {
+      try {
+        const applicant = guild.members.cache.get(parsed.userId)
+          || await guild.members.fetch(parsed.userId).catch(() => null);
+        if (applicant) {
+          await applicant.roles.add(roleId);
+        }
+      } catch (error) {
+        console.warn(`Failed to assign role ${roleId} to user ${parsed.userId}:`, error);
+      }
+    }
+  }
 
   await respond(`Application has been ${status}.`);
 }
@@ -167,13 +189,21 @@ async function getOfficerRoleForGuild(guild) {
 async function registerSlashCommands(guild) {
   const commands = [
     new SlashCommandBuilder()
-      .setName('setquestions')
-      .setDescription('Set questions for a specific application')
+      .setName('createapplication')
+      .setDescription('Create or update an application')
       .addStringOption((option) => option
-        .setName(SET_QUESTIONS_APPLICATION_NAME_OPTION_ID)
-        .setDescription('Which application to edit or create')
+        .setName(CREATE_APPLICATION_NAME_OPTION_ID)
+        .setDescription('Application name to create or update')
         .setRequired(true)
-        .setMaxLength(80)),
+        .setMaxLength(80))
+      .addRoleOption((option) => option
+        .setName(CREATE_APPLICATION_APPROVE_ROLE_OPTION_ID)
+        .setDescription('Role to assign to applicant on approve (optional)')
+        .setRequired(false))
+      .addRoleOption((option) => option
+        .setName(CREATE_APPLICATION_DENY_ROLE_OPTION_ID)
+        .setDescription('Role to assign to applicant on deny (optional)')
+        .setRequired(false)),
     new SlashCommandBuilder()
       .setName('setofficerrole')
       .setDescription('Set which role can manage applications')
@@ -224,14 +254,14 @@ client.on('interactionCreate', async (interaction) => {
 
     const officerRole = await getOfficerRoleForGuild(interaction.guild);
 
-    if (interaction.commandName === 'setquestions') {
+    if (interaction.commandName === 'createapplication') {
       if (!hasOfficerPermissions(interaction.member, officerRole)) {
         await replyEphemeral(interaction, 'Only officers can configure applications.');
         return;
       }
 
       const requestedApplicationName = interaction.options
-        .getString(SET_QUESTIONS_APPLICATION_NAME_OPTION_ID, true)
+        .getString(CREATE_APPLICATION_NAME_OPTION_ID, true)
         .trim();
 
       if (!requestedApplicationName) {
@@ -239,11 +269,14 @@ client.on('interactionCreate', async (interaction) => {
         return;
       }
 
+      const approveRole = interaction.options.getRole(CREATE_APPLICATION_APPROVE_ROLE_OPTION_ID);
+      const denyRole = interaction.options.getRole(CREATE_APPLICATION_DENY_ROLE_OPTION_ID);
+
       const existingApplication = await getApplicationByName(interaction.guild.id, requestedApplicationName);
 
       const modal = new ModalBuilder()
-        .setCustomId(SET_QUESTIONS_MODAL_ID)
-        .setTitle(`Questions: ${requestedApplicationName}`.slice(0, 45));
+        .setCustomId(CREATE_APPLICATION_MODAL_ID)
+        .setTitle(`Application: ${requestedApplicationName}`.slice(0, 45));
 
       const questionsInput = new TextInputBuilder()
         .setCustomId(APPLICATION_QUESTIONS_INPUT_ID)
@@ -257,9 +290,13 @@ client.on('interactionCreate', async (interaction) => {
         new ActionRowBuilder().addComponents(questionsInput),
       );
 
-      pendingSetQuestionsContext.set(
-        getSetQuestionsContextKey(interaction.guild.id, interaction.user.id),
-        requestedApplicationName,
+      pendingCreateApplicationContext.set(
+        getCreateApplicationContextKey(interaction.guild.id, interaction.user.id),
+        {
+          applicationName: requestedApplicationName,
+          approveRoleId: approveRole?.id ?? existingApplication?.approve_role_id ?? null,
+          denyRoleId: denyRole?.id ?? existingApplication?.deny_role_id ?? null,
+        },
       );
 
       await interaction.showModal(modal);
@@ -326,6 +363,7 @@ client.on('interactionCreate', async (interaction) => {
         member: interaction.member,
         status,
         officerRole,
+        botUserId: interaction.client.user.id,
         respond: async (content) => {
           await interaction.reply(content);
         },
@@ -336,7 +374,7 @@ client.on('interactionCreate', async (interaction) => {
     return;
   }
 
-  if (interaction.isModalSubmit() && interaction.customId === SET_QUESTIONS_MODAL_ID) {
+  if (interaction.isModalSubmit() && interaction.customId === CREATE_APPLICATION_MODAL_ID) {
     if (!interaction.guild) {
       await replyEphemeral(interaction, 'This action can only be used in a server.');
       return;
@@ -348,12 +386,12 @@ client.on('interactionCreate', async (interaction) => {
       return;
     }
 
-    const contextKey = getSetQuestionsContextKey(interaction.guild.id, interaction.user.id);
-    const applicationName = pendingSetQuestionsContext.get(contextKey);
-    pendingSetQuestionsContext.delete(contextKey);
+    const contextKey = getCreateApplicationContextKey(interaction.guild.id, interaction.user.id);
+    const context = pendingCreateApplicationContext.get(contextKey);
+    pendingCreateApplicationContext.delete(contextKey);
 
-    if (!applicationName) {
-      await replyEphemeral(interaction, 'Application context expired. Please run /setquestions again.');
+    if (!context) {
+      await replyEphemeral(interaction, 'Application context expired. Please run /createapplication again.');
       return;
     }
 
@@ -366,12 +404,14 @@ client.on('interactionCreate', async (interaction) => {
 
     await upsertApplication({
       guildId: interaction.guild.id,
-      applicationName,
+      applicationName: context.applicationName,
       questionsText,
+      approveRoleId: context.approveRoleId,
+      denyRoleId: context.denyRoleId,
     });
 
     await replyEphemeral(interaction, {
-      content: `Application settings saved for **${applicationName}**.`,
+      content: `Application settings saved for **${context.applicationName}**.`,
     });
     return;
   }
@@ -405,6 +445,7 @@ client.on('interactionCreate', async (interaction) => {
     officerRole,
     pendingCategoryName: DEFAULT_PENDING_CATEGORY_NAME,
     questionsText: application.questions_text,
+    applicationId: application.id,
   });
 
   const response = created
@@ -431,6 +472,7 @@ client.on('messageCreate', async (message) => {
     member: message.member,
     status,
     officerRole,
+    botUserId: message.client.user.id,
     respond: async (content) => {
       await message.reply(content);
     },

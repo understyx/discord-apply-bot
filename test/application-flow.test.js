@@ -8,6 +8,7 @@ import {
   getQuestionsText,
   moveApplicationChannelToStatus,
   parseApplicationButtonId,
+  parseApplicationTopic,
   parseStatusCommand,
 } from '../src/application-flow.js';
 
@@ -33,6 +34,25 @@ test('findApplicationChannelByUser matches by topic marker', () => {
 
   assert.deepEqual(findApplicationChannelByUser(channels, userId), channels[1]);
   assert.equal(findApplicationChannelByUser(channels, '000'), null);
+});
+
+test('findApplicationChannelByUser matches legacy and new topic formats', () => {
+  const userId = '111222333';
+  const legacyChannel = { topic: `application:${userId}` };
+  const newChannel = { topic: `application:${userId}:42` };
+
+  assert.deepEqual(findApplicationChannelByUser([legacyChannel], userId), legacyChannel);
+  assert.deepEqual(findApplicationChannelByUser([newChannel], userId), newChannel);
+  assert.equal(findApplicationChannelByUser([{ topic: `application:${userId}extra` }], userId), null);
+});
+
+test('parseApplicationTopic extracts userId and applicationId', () => {
+  assert.deepEqual(parseApplicationTopic('application:123456:789'), { userId: '123456', applicationId: 789 });
+  assert.deepEqual(parseApplicationTopic('application:123456'), { userId: '123456', applicationId: null });
+  assert.equal(parseApplicationTopic(''), null);
+  assert.equal(parseApplicationTopic(null), null);
+  assert.equal(parseApplicationTopic('application:abc'), null);
+  assert.equal(parseApplicationTopic('other:123'), null);
 });
 
 test('getQuestionsText prefers configured text and falls back safely', () => {
