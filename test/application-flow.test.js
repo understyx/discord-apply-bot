@@ -19,10 +19,16 @@ test('parseStatusCommand handles approve and deny commands', () => {
 });
 
 test('buildApplicationChannelName sanitizes username and keeps valid size', () => {
-  const channelName = buildApplicationChannelName('My User.Name', '1234567890123');
-  assert.match(channelName, /^application-/);
+  const channelName = buildApplicationChannelName('My User.Name', 'Guild Application');
+  assert.match(channelName, /^my-user-name-guild-application$/);
   assert.ok(channelName.length <= 100);
   assert.equal(channelName.includes('.'), false);
+
+  const noUsername = buildApplicationChannelName('', 'Guild Application');
+  assert.match(noUsername, /^applicant-guild-application$/);
+
+  const noAppName = buildApplicationChannelName('johndoe', '');
+  assert.match(noAppName, /^johndoe-application$/);
 });
 
 test('findApplicationChannelByUser matches by topic marker', () => {

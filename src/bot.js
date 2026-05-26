@@ -446,6 +446,7 @@ client.on('interactionCreate', async (interaction) => {
     pendingCategoryName: DEFAULT_PENDING_CATEGORY_NAME,
     questionsText: application.questions_text,
     applicationId: application.id,
+    applicationName: application.display_name,
   });
 
   const response = created
