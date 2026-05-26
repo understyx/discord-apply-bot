@@ -23,6 +23,7 @@ import {
   parseStatusCommand,
 } from './application-flow.js';
 import {
+  deleteApplicationByName,
   getApplicationById,
   getApplicationByName,
   getGuildSettings,
@@ -237,6 +238,14 @@ async function registerSlashCommands(guild) {
       .setName('postapply')
       .setDescription('Post the application embed with apply buttons'),
     new SlashCommandBuilder()
+      .setName('deleteapplication')
+      .setDescription('Delete an existing application')
+      .addStringOption((option) => option
+        .setName('application')
+        .setDescription('Application name to delete')
+        .setRequired(true)
+        .setAutocomplete(true)),
+    new SlashCommandBuilder()
       .setName('approve')
       .setDescription('Mark the current application as approved'),
     new SlashCommandBuilder()
@@ -268,6 +277,25 @@ client.on('guildCreate', async (guild) => {
 });
 
 client.on('interactionCreate', async (interaction) => {
+  if (interaction.isAutocomplete()) {
+    if (!interaction.guild) {
+      await interaction.respond([]);
+      return;
+    }
+
+    if (interaction.commandName === 'deleteapplication') {
+      const focusedValue = interaction.options.getFocused().toLowerCase();
+      const applications = await listGuildApplications(interaction.guild.id);
+      const filtered = applications
+        .filter((app) => app.display_name.toLowerCase().includes(focusedValue))
+        .slice(0, 25)
+        .map((app) => ({ name: app.display_name, value: app.display_name }));
+      await interaction.respond(filtered);
+    }
+
+    return;
+  }
+
   if (interaction.isChatInputCommand()) {
     if (!interaction.guild) {
       await replyEphemeral(interaction, 'This command can only be used in a server.');
@@ -378,6 +406,24 @@ client.on('interactionCreate', async (interaction) => {
       });
 
       await replyEphemeral(interaction, 'Application embed posted.');
+      return;
+    }
+
+    if (interaction.commandName === 'deleteapplication') {
+      if (!hasOfficerPermissions(interaction.member, officerRoles)) {
+        await replyEphemeral(interaction, 'Only officers can delete applications.');
+        return;
+      }
+
+      const applicationName = interaction.options.getString('application', true).trim();
+      const deleted = await deleteApplicationByName(interaction.guild.id, applicationName);
+
+      if (!deleted) {
+        await replyEphemeral(interaction, `No application found with name **${applicationName}**.`);
+        return;
+      }
+
+      await replyEphemeral(interaction, `Application **${applicationName}** has been deleted.`);
       return;
     }
 
