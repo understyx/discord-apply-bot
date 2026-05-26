@@ -120,22 +120,21 @@ export async function ensureCategory(guild, categoryName, botUserId) {
   });
 }
 
-async function ensureOfficerRoleAccess(channel, officerRole) {
-  if (!officerRole) {
-    return;
-  }
+async function ensureOfficerRoleAccess(channel, officerRoles) {
+  for (const officerRole of officerRoles) {
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      await channel.permissionOverwrites.edit(officerRole.id, OFFICER_CHANNEL_ALLOW_PERMISSIONS);
+    } catch (error) {
+      if (isMissingPermissionsError(error)) {
+        console.warn(
+          `Missing permissions while updating officer role access for channel ${channel.id ?? 'unknown'}.`,
+        );
+        return;
+      }
 
-  try {
-    await channel.permissionOverwrites.edit(officerRole.id, OFFICER_CHANNEL_ALLOW_PERMISSIONS);
-  } catch (error) {
-    if (isMissingPermissionsError(error)) {
-      console.warn(
-        `Missing permissions while updating officer role access for channel ${channel.id ?? 'unknown'}.`,
-      );
-      return;
+      throw error;
     }
-
-    throw error;
   }
 }
 
@@ -147,7 +146,7 @@ export async function createPendingApplicationChannel({
   guild,
   user,
   botUserId,
-  officerRole,
+  officerRoles,
   pendingCategoryName,
   questionsText,
   applicationId,
@@ -160,7 +159,7 @@ export async function createPendingApplicationChannel({
 
   const existing = findApplicationChannelByUser([...applicationChannels.values()], user.id);
   if (existing) {
-    await ensureOfficerRoleAccess(existing, officerRole);
+    await ensureOfficerRoleAccess(existing, officerRoles);
     return { channel: existing, created: false };
   }
 
@@ -175,7 +174,7 @@ export async function createPendingApplicationChannel({
     },
   ];
 
-  if (officerRole) {
+  for (const officerRole of officerRoles) {
     permissionOverwrites.push({
       id: officerRole.id,
       allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory', 'ManageChannels'],
@@ -197,7 +196,7 @@ export async function createPendingApplicationChannel({
     permissionOverwrites,
   });
 
-  await ensureOfficerRoleAccess(channel, officerRole);
+  await ensureOfficerRoleAccess(channel, officerRoles);
 
   await channel.send([
     `<@${user.id}> applying for **${applicationName}**`,
@@ -215,7 +214,7 @@ export async function moveApplicationChannelToStatus({
   status,
   approvedCategoryName,
   deniedCategoryName,
-  officerRole,
+  officerRoles,
   botUserId,
 }) {
   const destinationName = status === 'approved' ? approvedCategoryName : deniedCategoryName;
@@ -234,5 +233,5 @@ export async function moveApplicationChannelToStatus({
     throw error;
   }
 
-  await ensureOfficerRoleAccess(channel, officerRole);
+  await ensureOfficerRoleAccess(channel, officerRoles);
 }

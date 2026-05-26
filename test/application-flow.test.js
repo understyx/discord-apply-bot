@@ -108,7 +108,7 @@ test('moveApplicationChannelToStatus ensures officer role access on moved channe
     status: 'approved',
     approvedCategoryName: 'Approved Apps',
     deniedCategoryName: 'Denied Apps',
-    officerRole: { id: 'officer-role-id' },
+    officerRoles: [{ id: 'officer-role-id' }],
   });
 
   assert.equal(movedToCategoryId, 'approved-category-id');
@@ -157,7 +157,7 @@ test('moveApplicationChannelToStatus ignores missing permissions when updating o
       status: 'denied',
       approvedCategoryName: 'Approved Apps',
       deniedCategoryName: 'Denied Apps',
-      officerRole: { id: 'officer-role-id' },
+      officerRoles: [{ id: 'officer-role-id' }],
     });
   });
 
@@ -199,7 +199,7 @@ test('moveApplicationChannelToStatus ignores missing permissions when moving cha
       status: 'approved',
       approvedCategoryName: 'Approved Apps',
       deniedCategoryName: 'Denied Apps',
-      officerRole: { id: 'officer-role-id' },
+      officerRoles: [{ id: 'officer-role-id' }],
     });
   });
 

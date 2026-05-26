@@ -28,7 +28,7 @@ import {
   getGuildSettings,
   initDatabase,
   listGuildApplications,
-  setGuildOfficerRole,
+  setGuildOfficerRoles,
   upsertApplication,
 } from './storage.js';
 
@@ -67,7 +67,7 @@ const CREATE_APPLICATION_MODAL_ID = 'guild-application:create-application';
 const CREATE_APPLICATION_NAME_OPTION_ID = 'application';
 const CREATE_APPLICATION_APPROVE_ROLE_OPTION_ID = 'approve_role';
 const CREATE_APPLICATION_DENY_ROLE_OPTION_ID = 'deny_role';
-const SET_OFFICER_ROLE_OPTION_ID = 'role';
+const SET_OFFICER_ROLE_OPTION_IDS = ['role', 'role2', 'role3', 'role4', 'role5'];
 const APPLICATION_QUESTIONS_INPUT_ID = 'application-questions';
 
 const pendingCreateApplicationContext = new Map();
@@ -84,7 +84,7 @@ function getCreateApplicationContextKey(guildId, userId) {
   return `${guildId}:${userId}`;
 }
 
-function hasOfficerPermissions(member, officerRole) {
+function hasOfficerPermissions(member, officerRoles) {
   if (!member) {
     return false;
   }
@@ -93,7 +93,7 @@ function hasOfficerPermissions(member, officerRole) {
     return true;
   }
 
-  return Boolean(officerRole && member.roles.cache.has(officerRole.id));
+  return officerRoles.some((role) => member.roles.cache.has(role.id));
 }
 
 async function replyEphemeral(interaction, payload) {
@@ -132,7 +132,7 @@ async function applyApplicationStatus({
   channel,
   member,
   status,
-  officerRole,
+  officerRoles,
   botUserId,
   respond,
 }) {
@@ -141,7 +141,7 @@ async function applyApplicationStatus({
     return;
   }
 
-  if (!hasOfficerPermissions(member, officerRole)) {
+  if (!hasOfficerPermissions(member, officerRoles)) {
     await respond('Only officers can approve or deny applications.');
     return;
   }
@@ -152,7 +152,7 @@ async function applyApplicationStatus({
     status,
     approvedCategoryName: DEFAULT_APPROVED_CATEGORY_NAME,
     deniedCategoryName: DEFAULT_DENIED_CATEGORY_NAME,
-    officerRole,
+    officerRoles,
     botUserId,
   });
 
@@ -176,14 +176,20 @@ async function applyApplicationStatus({
   await respond(`Application has been ${status}.`);
 }
 
-async function getOfficerRoleForGuild(guild) {
+async function getOfficerRolesForGuild(guild) {
   const settings = await getGuildSettings(guild.id);
-  if (!settings.officerRoleId) {
-    return null;
+  if (!settings.officerRoleIds.length) {
+    return [];
   }
 
-  return guild.roles.cache.get(settings.officerRoleId)
-    || await guild.roles.fetch(settings.officerRoleId).catch(() => null);
+  const roles = await Promise.all(
+    settings.officerRoleIds.map((roleId) => (
+      guild.roles.cache.get(roleId)
+        || guild.roles.fetch(roleId).catch(() => null)
+    )),
+  );
+
+  return roles.filter(Boolean);
 }
 
 async function registerSlashCommands(guild) {
@@ -206,11 +212,27 @@ async function registerSlashCommands(guild) {
         .setRequired(false)),
     new SlashCommandBuilder()
       .setName('setofficerrole')
-      .setDescription('Set which role can manage applications')
+      .setDescription('Set which roles can manage applications')
       .addRoleOption((option) => option
-        .setName(SET_OFFICER_ROLE_OPTION_ID)
+        .setName(SET_OFFICER_ROLE_OPTION_IDS[0])
         .setDescription('Officer role')
-        .setRequired(true)),
+        .setRequired(true))
+      .addRoleOption((option) => option
+        .setName(SET_OFFICER_ROLE_OPTION_IDS[1])
+        .setDescription('Additional officer role (optional)')
+        .setRequired(false))
+      .addRoleOption((option) => option
+        .setName(SET_OFFICER_ROLE_OPTION_IDS[2])
+        .setDescription('Additional officer role (optional)')
+        .setRequired(false))
+      .addRoleOption((option) => option
+        .setName(SET_OFFICER_ROLE_OPTION_IDS[3])
+        .setDescription('Additional officer role (optional)')
+        .setRequired(false))
+      .addRoleOption((option) => option
+        .setName(SET_OFFICER_ROLE_OPTION_IDS[4])
+        .setDescription('Additional officer role (optional)')
+        .setRequired(false)),
     new SlashCommandBuilder()
       .setName('postapply')
       .setDescription('Post the application embed with apply buttons'),
@@ -252,10 +274,10 @@ client.on('interactionCreate', async (interaction) => {
       return;
     }
 
-    const officerRole = await getOfficerRoleForGuild(interaction.guild);
+    const officerRoles = await getOfficerRolesForGuild(interaction.guild);
 
     if (interaction.commandName === 'createapplication') {
-      if (!hasOfficerPermissions(interaction.member, officerRole)) {
+      if (!hasOfficerPermissions(interaction.member, officerRoles)) {
         await replyEphemeral(interaction, 'Only officers can configure applications.');
         return;
       }
@@ -309,15 +331,19 @@ client.on('interactionCreate', async (interaction) => {
         return;
       }
 
-      const role = interaction.options.getRole(SET_OFFICER_ROLE_OPTION_ID, true);
-      await setGuildOfficerRole(interaction.guild.id, role.id);
+      const roles = SET_OFFICER_ROLE_OPTION_IDS
+        .map((name) => interaction.options.getRole(name))
+        .filter(Boolean);
+      const uniqueRoleIds = [...new Set(roles.map((r) => r.id))];
+      await setGuildOfficerRoles(interaction.guild.id, uniqueRoleIds);
 
-      await replyEphemeral(interaction, `Officer role updated to <@&${role.id}>.`);
+      const rolesMentions = uniqueRoleIds.map((id) => `<@&${id}>`).join(', ');
+      await replyEphemeral(interaction, `Officer roles updated to ${rolesMentions}.`);
       return;
     }
 
     if (interaction.commandName === 'postapply') {
-      if (!hasOfficerPermissions(interaction.member, officerRole)) {
+      if (!hasOfficerPermissions(interaction.member, officerRoles)) {
         await replyEphemeral(interaction, 'Only officers can post the application message.');
         return;
       }
@@ -362,7 +388,7 @@ client.on('interactionCreate', async (interaction) => {
         channel: interaction.channel,
         member: interaction.member,
         status,
-        officerRole,
+        officerRoles,
         botUserId: interaction.client.user.id,
         respond: async (content) => {
           await interaction.reply(content);
@@ -380,8 +406,8 @@ client.on('interactionCreate', async (interaction) => {
       return;
     }
 
-    const officerRole = await getOfficerRoleForGuild(interaction.guild);
-    if (!hasOfficerPermissions(interaction.member, officerRole)) {
+    const officerRoles = await getOfficerRolesForGuild(interaction.guild);
+    if (!hasOfficerPermissions(interaction.member, officerRoles)) {
       await replyEphemeral(interaction, 'Only officers can configure applications.');
       return;
     }
@@ -436,13 +462,13 @@ client.on('interactionCreate', async (interaction) => {
     return;
   }
 
-  const officerRole = await getOfficerRoleForGuild(interaction.guild);
+  const officerRoles = await getOfficerRolesForGuild(interaction.guild);
 
   const { channel, created } = await createPendingApplicationChannel({
     guild: interaction.guild,
     user: interaction.user,
     botUserId: interaction.client.user.id,
-    officerRole,
+    officerRoles,
     pendingCategoryName: DEFAULT_PENDING_CATEGORY_NAME,
     questionsText: application.questions_text,
     applicationId: application.id,
@@ -466,13 +492,13 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
-  const officerRole = await getOfficerRoleForGuild(message.guild);
+  const officerRoles = await getOfficerRolesForGuild(message.guild);
   await applyApplicationStatus({
     guild: message.guild,
     channel: message.channel,
     member: message.member,
     status,
-    officerRole,
+    officerRoles,
     botUserId: message.client.user.id,
     respond: async (content) => {
       await message.reply(content);
