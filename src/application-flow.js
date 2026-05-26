@@ -1,5 +1,3 @@
-const DEFAULT_CHANNEL_PREFIX = 'application';
-
 const APPLICATION_BUTTON_PREFIX = 'guild-application:apply:';
 
 const OFFICER_CHANNEL_ALLOW_PERMISSIONS = {
@@ -44,15 +42,22 @@ export function parseStatusCommand(content) {
   return null;
 }
 
-export function buildApplicationChannelName(username, userId) {
-  const cleanName = (username || 'applicant')
+export function buildApplicationChannelName(username, applicationName) {
+  const cleanUsername = (username || 'applicant')
     .toLowerCase()
     .replace(/[^a-z0-9-]/g, '-')
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '')
-    .slice(0, 70);
+    .slice(0, 40);
 
-  return `${DEFAULT_CHANNEL_PREFIX}-${cleanName || 'user'}-${String(userId).slice(-8)}`.slice(0, 100);
+  const cleanAppName = (applicationName || 'application')
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 50);
+
+  return `${cleanUsername || 'user'}-${cleanAppName || 'application'}`.slice(0, 100);
 }
 
 export function getApplicationTopic(userId, applicationId) {
@@ -146,6 +151,7 @@ export async function createPendingApplicationChannel({
   pendingCategoryName,
   questionsText,
   applicationId,
+  applicationName,
 }) {
   const pendingCategory = await ensureCategory(guild, pendingCategoryName, botUserId);
   const applicationChannels = guild.channels.cache.filter(
@@ -184,7 +190,7 @@ export async function createPendingApplicationChannel({
   }
 
   const channel = await guild.channels.create({
-    name: buildApplicationChannelName(user.username, user.id),
+    name: buildApplicationChannelName(user.username, applicationName),
     type: 0,
     parent: pendingCategory.id,
     topic: getApplicationTopic(user.id, applicationId),
@@ -194,7 +200,7 @@ export async function createPendingApplicationChannel({
   await ensureOfficerRoleAccess(channel, officerRole);
 
   await channel.send([
-    `Application for <@${user.id}>`,
+    `<@${user.id}> applying for`,
     '',
     'Please answer the following questions:',
     questionsText,
