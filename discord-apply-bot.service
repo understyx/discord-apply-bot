@@ -1,0 +1,15 @@
+[Unit]
+Description=Discord Apply Bot
+After=network.target
+
+[Service]
+Type=simple
+User=discord-bot
+WorkingDirectory=/opt/discord-apply-bot
+EnvironmentFile=/opt/discord-apply-bot/.env
+ExecStart=/usr/bin/node src/bot.js
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
