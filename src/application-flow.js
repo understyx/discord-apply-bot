@@ -55,13 +55,35 @@ export function buildApplicationChannelName(username, userId) {
   return `${DEFAULT_CHANNEL_PREFIX}-${cleanName || 'user'}-${String(userId).slice(-8)}`.slice(0, 100);
 }
 
-export function getApplicationTopic(userId) {
+export function getApplicationTopic(userId, applicationId) {
+  if (applicationId != null) {
+    return `application:${userId}:${applicationId}`;
+  }
   return `application:${userId}`;
 }
 
 export function findApplicationChannelByUser(channels, userId) {
-  const topic = getApplicationTopic(userId);
-  return channels.find((channel) => channel.topic === topic) || null;
+  const exactTopic = `application:${userId}`;
+  const prefixTopic = `${exactTopic}:`;
+  return channels.find(
+    (channel) => channel.topic === exactTopic || channel.topic?.startsWith(prefixTopic),
+  ) || null;
+}
+
+export function parseApplicationTopic(topic) {
+  if (!topic) {
+    return null;
+  }
+
+  const match = topic.match(/^application:(\d+)(?::(\d+))?$/);
+  if (!match) {
+    return null;
+  }
+
+  return {
+    userId: match[1],
+    applicationId: match[2] != null ? Number(match[2]) : null,
+  };
 }
 
 export function getQuestionsText(configuredQuestions, defaultQuestions) {
@@ -73,7 +95,7 @@ export function getQuestionsText(configuredQuestions, defaultQuestions) {
   return defaultQuestions || 'Please answer the guild application questions.';
 }
 
-export async function ensureCategory(guild, categoryName) {
+export async function ensureCategory(guild, categoryName, botUserId) {
   const existing = guild.channels.cache.find(
     (channel) => channel.type === 4 && channel.name === categoryName,
   );
@@ -82,9 +104,14 @@ export async function ensureCategory(guild, categoryName) {
     return existing;
   }
 
+  const permissionOverwrites = botUserId
+    ? [{ id: botUserId, allow: ['ViewChannel', 'ManageChannels'] }]
+    : [];
+
   return guild.channels.create({
     name: categoryName,
     type: 4,
+    permissionOverwrites,
   });
 }
 
@@ -118,8 +145,9 @@ export async function createPendingApplicationChannel({
   officerRole,
   pendingCategoryName,
   questionsText,
+  applicationId,
 }) {
-  const pendingCategory = await ensureCategory(guild, pendingCategoryName);
+  const pendingCategory = await ensureCategory(guild, pendingCategoryName, botUserId);
   const applicationChannels = guild.channels.cache.filter(
     (channel) => channel.parentId === pendingCategory.id,
   );
@@ -151,7 +179,7 @@ export async function createPendingApplicationChannel({
   if (botUserId) {
     permissionOverwrites.push({
       id: botUserId,
-      allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory'],
+      allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory', 'ManageChannels'],
     });
   }
 
@@ -159,7 +187,7 @@ export async function createPendingApplicationChannel({
     name: buildApplicationChannelName(user.username, user.id),
     type: 0,
     parent: pendingCategory.id,
-    topic: getApplicationTopic(user.id),
+    topic: getApplicationTopic(user.id, applicationId),
     permissionOverwrites,
   });
 
@@ -182,9 +210,10 @@ export async function moveApplicationChannelToStatus({
   approvedCategoryName,
   deniedCategoryName,
   officerRole,
+  botUserId,
 }) {
   const destinationName = status === 'approved' ? approvedCategoryName : deniedCategoryName;
-  const destinationCategory = await ensureCategory(guild, destinationName);
+  const destinationCategory = await ensureCategory(guild, destinationName, botUserId);
 
   try {
     await channel.setParent(destinationCategory.id);

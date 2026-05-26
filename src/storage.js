@@ -67,11 +67,19 @@ export async function initDatabase({
       application_key VARCHAR(80) NOT NULL,
       display_name VARCHAR(80) NOT NULL,
       questions_text TEXT NOT NULL,
+      approve_role_id VARCHAR(32) NULL,
+      deny_role_id VARCHAR(32) NULL,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       UNIQUE KEY uq_applications_guild_key (guild_id, application_key),
       KEY idx_applications_guild_id (guild_id)
     )
+  `);
+
+  await pool.query(`
+    ALTER TABLE applications
+      ADD COLUMN IF NOT EXISTS approve_role_id VARCHAR(32) NULL,
+      ADD COLUMN IF NOT EXISTS deny_role_id VARCHAR(32) NULL
   `);
 }
 
@@ -103,22 +111,26 @@ export async function upsertApplication({
   guildId,
   applicationName,
   questionsText,
+  approveRoleId,
+  denyRoleId,
 }) {
   const key = normalizeApplicationKey(applicationName);
   await getPool().query(
     `
-      INSERT INTO applications (guild_id, application_key, display_name, questions_text)
-      VALUES (?, ?, ?, ?)
+      INSERT INTO applications (guild_id, application_key, display_name, questions_text, approve_role_id, deny_role_id)
+      VALUES (?, ?, ?, ?, ?, ?)
       ON DUPLICATE KEY UPDATE
         display_name = VALUES(display_name),
-        questions_text = VALUES(questions_text)
+        questions_text = VALUES(questions_text),
+        approve_role_id = VALUES(approve_role_id),
+        deny_role_id = VALUES(deny_role_id)
     `,
-    [guildId, key, applicationName.trim(), questionsText.trim()],
+    [guildId, key, applicationName.trim(), questionsText.trim(), approveRoleId ?? null, denyRoleId ?? null],
   );
 
   const [rows] = await getPool().query(
     `
-      SELECT id, guild_id, application_key, display_name, questions_text
+      SELECT id, guild_id, application_key, display_name, questions_text, approve_role_id, deny_role_id
       FROM applications
       WHERE guild_id = ? AND application_key = ?
       LIMIT 1
@@ -132,7 +144,7 @@ export async function upsertApplication({
 export async function getApplicationByName(guildId, applicationName) {
   const [rows] = await getPool().query(
     `
-      SELECT id, guild_id, application_key, display_name, questions_text
+      SELECT id, guild_id, application_key, display_name, questions_text, approve_role_id, deny_role_id
       FROM applications
       WHERE guild_id = ? AND application_key = ?
       LIMIT 1
@@ -146,7 +158,7 @@ export async function getApplicationByName(guildId, applicationName) {
 export async function getApplicationById(guildId, applicationId) {
   const [rows] = await getPool().query(
     `
-      SELECT id, guild_id, application_key, display_name, questions_text
+      SELECT id, guild_id, application_key, display_name, questions_text, approve_role_id, deny_role_id
       FROM applications
       WHERE guild_id = ? AND id = ?
       LIMIT 1
@@ -160,7 +172,7 @@ export async function getApplicationById(guildId, applicationId) {
 export async function listGuildApplications(guildId) {
   const [rows] = await getPool().query(
     `
-      SELECT id, guild_id, application_key, display_name, questions_text
+      SELECT id, guild_id, application_key, display_name, questions_text, approve_role_id, deny_role_id
       FROM applications
       WHERE guild_id = ?
       ORDER BY display_name ASC
