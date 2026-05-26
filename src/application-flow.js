@@ -194,7 +194,7 @@ export async function createPendingApplicationChannel({
   await ensureOfficerRoleAccess(channel, officerRole);
 
   await channel.send([
-    `Application for <@${user.id}>`,
+    `<@${user.id}> applying for`,
     '',
     'Please answer the following questions:',
     questionsText,
