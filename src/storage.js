@@ -81,30 +81,46 @@ export async function initDatabase({
       ADD COLUMN IF NOT EXISTS approve_role_id VARCHAR(32) NULL,
       ADD COLUMN IF NOT EXISTS deny_role_id VARCHAR(32) NULL
   `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS guild_officer_roles (
+      guild_id VARCHAR(32) NOT NULL,
+      role_id VARCHAR(32) NOT NULL,
+      PRIMARY KEY (guild_id, role_id)
+    )
+  `);
+
+  await pool.query(`
+    INSERT IGNORE INTO guild_officer_roles (guild_id, role_id)
+    SELECT guild_id, officer_role_id FROM guild_settings WHERE officer_role_id IS NOT NULL
+  `);
 }
 
 export async function getGuildSettings(guildId) {
   const [rows] = await getPool().query(
-    'SELECT officer_role_id FROM guild_settings WHERE guild_id = ? LIMIT 1',
+    'SELECT role_id FROM guild_officer_roles WHERE guild_id = ?',
     [guildId],
   );
 
-  if (!rows.length) {
-    return { officerRoleId: null };
-  }
-
-  return { officerRoleId: rows[0].officer_role_id };
+  return { officerRoleIds: rows.map((r) => r.role_id) };
 }
 
-export async function setGuildOfficerRole(guildId, officerRoleId) {
-  await getPool().query(
-    `
-      INSERT INTO guild_settings (guild_id, officer_role_id)
-      VALUES (?, ?)
-      ON DUPLICATE KEY UPDATE officer_role_id = VALUES(officer_role_id)
-    `,
-    [guildId, officerRoleId],
-  );
+export async function setGuildOfficerRoles(guildId, roleIds) {
+  const conn = await getPool().getConnection();
+  try {
+    await conn.beginTransaction();
+    await conn.query('DELETE FROM guild_officer_roles WHERE guild_id = ?', [guildId]);
+    if (roleIds.length > 0) {
+      const values = roleIds.map((id) => [guildId, id]);
+      await conn.query('INSERT INTO guild_officer_roles (guild_id, role_id) VALUES ?', [values]);
+    }
+    await conn.commit();
+  } catch (error) {
+    await conn.rollback();
+    throw error;
+  } finally {
+    conn.release();
+  }
 }
 
 export async function upsertApplication({
