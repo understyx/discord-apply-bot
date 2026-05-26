@@ -185,6 +185,16 @@ export async function getApplicationById(guildId, applicationId) {
   return rows[0] || null;
 }
 
+export async function deleteApplicationByName(guildId, applicationName) {
+  const key = normalizeApplicationKey(applicationName);
+  const [result] = await getPool().query(
+    'DELETE FROM applications WHERE guild_id = ? AND application_key = ?',
+    [guildId, key],
+  );
+
+  return result.affectedRows > 0;
+}
+
 export async function listGuildApplications(guildId) {
   const [rows] = await getPool().query(
     `
